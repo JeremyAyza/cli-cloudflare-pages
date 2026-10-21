@@ -1,4 +1,5 @@
 import { Command, CommanderError } from '@commander-js/extra-typings';
+import { registerSettings } from './commands/settings.js';
 import type { Context } from './core/context.js';
 import { CliError } from './core/errors.js';
 import { type GlobalFlags, readGlobalFlags } from './core/flags.js';
@@ -22,27 +23,29 @@ Exit codes:
 
 /**
  * Builds the root program. Commander settings are applied before any subcommand is created, so commands
- * registered afterwards inherit them (`exitOverride`, `configureOutput`). Later tasks add `register(program, ctx)` calls here.
+ * registered afterwards inherit them (`exitOverride`, `configureOutput`). Each command module exports a
+ * `register…(program, ctx)` function that is called here; later tasks add theirs below `registerSettings`.
  */
 export function createProgram(ctx: Context): Command {
   const { io } = ctx;
-  return (
-    new Command()
-      .name('cf-pages')
-      .description(DESCRIPTION)
-      .version(ctx.version)
-      .option('--json', 'print a single JSON document on stdout')
-      .option('-y, --yes', 'skip confirmation prompts for non-production changes')
-      .option('--confirm <project>', 'confirm a production or destructive change by project name')
-      .option('--dry-run', 'show what would happen without changing anything')
-      .option('--no-input', 'never prompt; fail when input would be needed')
-      .option('--no-color', 'disable colored output')
-      .option('--debug', 'print redacted diagnostics to stderr')
-      .addHelpText('after', EXIT_CODES_HELP)
-      .exitOverride()
-      // Commander's own error line is dropped: every error is rendered once, by `renderError`.
-      .configureOutput({ writeOut: io.stdout, writeErr: io.stderr, outputError: () => {} })
-  );
+  const program = new Command()
+    .name('cf-pages')
+    .description(DESCRIPTION)
+    .version(ctx.version)
+    .option('--json', 'print a single JSON document on stdout')
+    .option('-y, --yes', 'confirm preview-level changes without prompting (never enough for production)')
+    .option('--confirm <project>', 'confirm any change by project name (required for production when not prompting)')
+    .option('--dry-run', 'show what would happen without changing anything')
+    .option('--no-input', 'never prompt; fail when input would be needed')
+    .option('--no-color', 'disable colored output')
+    .option('--debug', 'print redacted diagnostics to stderr')
+    .addHelpText('after', EXIT_CODES_HELP)
+    .exitOverride()
+    // Commander's own error line is dropped: every error is rendered once, by `renderError`.
+    .configureOutput({ writeOut: io.stdout, writeErr: io.stderr, outputError: () => {} });
+
+  registerSettings(program, ctx);
+  return program;
 }
 
 const USAGE_HINT = 'Run "cf-pages --help" to see the available commands and options.';

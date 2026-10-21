@@ -203,7 +203,8 @@ describe('confirmMutation: production', () => {
     expect(err.code).toBe('confirmation_required');
     expect(err.exitCode).toBe(5);
     expect(err.message).toContain('productionRequiresTty');
-    expect(err.hint).toBeTruthy();
+    expect(err.hint).toContain('cf-pages settings set productionRequiresTty false');
+    expect(err.hint).toContain('interactive terminal');
     expect(io.prompts).toHaveLength(0);
   });
 

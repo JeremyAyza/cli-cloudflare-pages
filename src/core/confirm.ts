@@ -83,7 +83,7 @@ async function confirmProduction(
       'confirmation_required',
       'This changes production, and the productionRequiresTty setting only allows that from an interactive terminal.',
       {
-        hint: 'Ask the person to run this command themselves in a terminal, or set productionRequiresTty to false.',
+        hint: 'Ask the person to run this command themselves in an interactive terminal, or to lift the restriction with "cf-pages settings set productionRequiresTty false" (also from an interactive terminal).',
         details: { level: req.level, project },
       },
     );
