@@ -1,4 +1,5 @@
 import { Command, CommanderError } from '@commander-js/extra-typings';
+import { registerAuth } from './commands/auth.js';
 import { registerSettings } from './commands/settings.js';
 import type { Context } from './core/context.js';
 import { CliError } from './core/errors.js';
@@ -44,6 +45,7 @@ export function createProgram(ctx: Context): Command {
     // Commander's own error line is dropped: every error is rendered once, by `renderError`.
     .configureOutput({ writeOut: io.stdout, writeErr: io.stderr, outputError: () => {} });
 
+  registerAuth(program, ctx);
   registerSettings(program, ctx);
   return program;
 }
