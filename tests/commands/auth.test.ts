@@ -196,19 +196,36 @@ describe('login (interactive)', () => {
     expect((await readConfig(configDir)).profiles.default?.tokenType).toBe('user');
   });
 
-  it('--token-stdin on a terminal still asks for the label and the Account ID, and not for the token', async () => {
-    mockCloudflare();
+  it('--token-stdin on a terminal → exit 2 before reading stdin or prompting, nothing stored', async () => {
+    const requests = recordRequests();
     const keyring = new Map<string, string>();
-    const r = await runCli(['login', '--token-stdin'], {
-      tty: true,
-      stdin: `${TOKEN}\n`,
-      answers: ['Acme', ACCT],
-      keyring,
-      configDir,
-    });
-    expect(r.exitCode).toBe(0);
-    expect(r.prompts).toHaveLength(2);
-    expect(keyring.get(PROFILE)).toBe(TOKEN);
+    let readStdin: ReturnType<typeof vi.spyOn> | undefined;
+    for (const argv of [['login', '--token-stdin'], STDIN_ARGS]) {
+      const r = await runCli([...argv, '--json'], {
+        tty: true,
+        stdin: `${TOKEN}\n`,
+        answers: [],
+        keyring,
+        configDir,
+        configure: (_program, ctx) => {
+          readStdin = vi.spyOn(ctx.io, 'readStdin');
+        },
+      });
+      expect(r.exitCode, argv.join(' ')).toBe(2);
+      expect(r.json()).toEqual({
+        ok: false,
+        error: {
+          code: 'usage',
+          message: '--token-stdin expects the token to be piped on stdin.',
+          hint: 'Run `cf-pages login` without --token-stdin to type it into a hidden prompt.',
+        },
+      });
+      expect(readStdin).not.toHaveBeenCalled();
+      expect(r.prompts).toHaveLength(0);
+      await expectNothingStored(keyring);
+      await expectNoSecret(r, TOKEN);
+    }
+    expect(requests).toHaveLength(0);
   });
 
   it('keyring unavailable → exit 3 with KEYRING_HINT before any prompt', async () => {
@@ -596,10 +613,22 @@ describe('login --insecure-storage', () => {
     });
     expect(r.exitCode).toBe(0);
     expect(r.stderr).toContain('plain text');
-    expect(r.json<{ data: { storage: string } }>().data.storage).toBe('file (insecure)');
+    // JSON keeps `storage` a stable enum and flags the plain-text file separately.
+    expect(r.json()).toEqual({
+      ok: true,
+      data: {
+        label: 'Acme',
+        accountId: ACCT,
+        tokenType: 'account',
+        storage: 'file',
+        insecure: true,
+        expiresOn: null,
+      },
+    });
+    expect(r.stdout).not.toContain('file (insecure)');
   });
 
-  it('whoami then shows the storage as file (insecure)', async () => {
+  it('whoami then shows the storage as file (insecure), and JSON says storage file with insecure true', async () => {
     mockCloudflare();
     expect(
       (await runCli([...STDIN_ARGS, '--insecure-storage'], { stdin: TOKEN, keyring: 'unavailable', configDir }))
@@ -611,9 +640,15 @@ describe('login --insecure-storage', () => {
     expect(human.stdout).toContain('file (insecure)');
 
     const json = await runCli(['whoami', '--json'], { keyring: 'unavailable', configDir });
-    expect(json.json<{ data: { storage: string; source: string } }>().data).toMatchObject({
-      storage: 'file (insecure)',
+    expect(json.json<{ data: Record<string, unknown> }>().data).toEqual({
+      label: 'Acme',
+      accountId: ACCT,
+      tokenType: 'account',
       source: 'file',
+      storage: 'file',
+      insecure: true,
+      expiresOn: null,
+      status: 'active',
     });
     await expectNoSecret(human, TOKEN);
     await expectNoSecret(json, TOKEN);
@@ -790,8 +825,16 @@ describe('logout', () => {
   it('removes the token from credentials.json for file storage', async () => {
     mockCloudflare();
     await runCli([...STDIN_ARGS, '--insecure-storage'], { stdin: TOKEN, keyring: 'unavailable', configDir });
-    const r = await runCli(['logout'], { keyring: 'unavailable', configDir });
+    const r = await runCli(['logout', '--json'], { keyring: 'unavailable', configDir });
     expect(r.exitCode).toBe(0);
+    expect(r.json<{ data: Record<string, unknown> }>().data).toEqual({
+      loggedOut: true,
+      label: 'Acme',
+      accountId: ACCT,
+      storage: 'file',
+      insecure: true,
+      tokenDeleted: true,
+    });
     expect(await readText(CREDENTIALS_FILE)).toBeUndefined();
     expect((await readConfig(configDir)).profiles.default).toBeUndefined();
   });
@@ -918,7 +961,7 @@ describe('whoami', () => {
     expect(r.stderr).toContain('Acme');
   });
 
-  it('--json data keys: label, accountId, tokenType, source, storage, expiresOn, status', async () => {
+  it('--json data keys: label, accountId, tokenType, source, storage, expiresOn, status (and insecure only for file)', async () => {
     mockLive('active', '2099-01-01T00:00:00Z');
     const r = await runCli(['whoami', '--json'], await loggedIn({ configDir }));
     expect(r.exitCode).toBe(0);

@@ -35,8 +35,12 @@ const ACCOUNT_ID_HINT =
 
 type StorageKind = 'keyring' | 'file';
 
-/** What `login`, `logout` and `whoami` call the place where the token lives. A plain-text file is always flagged. */
+/** Human output: a plain-text file is always flagged as insecure. */
 const storageLabel = (kind: StorageKind): string => (kind === 'file' ? 'file (insecure)' : 'keyring');
+
+/** JSON output: `storage` is the stable enum, and `insecure: true` appears only when the token sits in a plain-text file. */
+const storageFields = (kind: StorageKind): { storage: StorageKind; insecure?: true } =>
+  kind === 'file' ? { storage: kind, insecure: true } : { storage: kind };
 
 /** The API token is a secret from the moment it is read: from then on it is scrubbed from every message. */
 function registerSecret(ctx: Context, secret: string): void {
@@ -243,6 +247,13 @@ async function runLogin(ctx: Context, flags: GlobalFlags, opts: LoginOptions): P
   const out = createOutput(ctx.io, flags);
   const interactive = canPrompt(ctx.io, flags);
 
+  // Checked before anything reads stdin: on a terminal it would wait for EOF and echo what is typed.
+  if (opts.tokenStdin === true && ctx.io.stdinIsTTY) {
+    throw new CliError('usage', '--token-stdin expects the token to be piped on stdin.', {
+      hint: 'Run `cf-pages login` without --token-stdin to type it into a hidden prompt.',
+    });
+  }
+
   // Values from flags are checked first: a typo should not cost a keychain access or a question.
   const given = {
     label: opts.label === undefined ? undefined : parseLabel(ctx, opts.label),
@@ -286,13 +297,13 @@ async function runLogin(ctx: Context, flags: GlobalFlags, opts: LoginOptions): P
     label,
     accountId,
     tokenType: verified.tokenType,
-    storage: storageLabel(storage),
+    ...storageFields(storage),
     expiresOn: verified.expiresOn ?? null,
   };
   const rows = (): [string, string][] => [
     ['Account', accountId],
     ['Token type', verified.tokenType],
-    ['Storage', summary.storage],
+    ['Storage', storageLabel(storage)],
     ['Expires', summary.expiresOn ?? 'never'],
   ];
 
@@ -364,7 +375,7 @@ async function runLogout(ctx: Context, flags: GlobalFlags): Promise<void> {
   const removed = {
     label: profile.label,
     accountId: profile.accountId,
-    storage: storageLabel(profile.storage),
+    ...storageFields(profile.storage),
   };
   if (flags.dryRun) {
     out.data(
@@ -418,7 +429,9 @@ interface Identity {
   accountId: string;
   tokenType: 'user' | 'account' | null;
   source: CredentialSource;
-  storage: string | null;
+  storage: StorageKind | null;
+  /** Only present (and true) when the token is kept in a plain-text file. */
+  insecure?: true;
   expiresOn: string | null;
   status: string;
 }
@@ -429,7 +442,7 @@ function renderIdentity(i: Identity): string {
     ['Account', i.accountId],
     ['Token type', i.tokenType ?? 'unknown'],
     ['Source', i.source === 'env' ? 'environment variables' : 'saved login'],
-    ['Storage', i.storage ?? 'none (environment variables)'],
+    ['Storage', i.storage === null ? 'none (environment variables)' : storageLabel(i.storage)],
     ['Expires', i.expiresOn ?? 'never'],
     ['Status', i.status === 'rejected' ? 'rejected (Cloudflare does not accept this token)' : i.status],
   ]);
@@ -450,7 +463,7 @@ async function runWhoami(ctx: Context, flags: GlobalFlags): Promise<void> {
     accountId: creds.accountId,
     tokenType: creds.tokenType ?? null,
     source: creds.source,
-    storage: creds.storage === undefined ? null : storageLabel(creds.storage),
+    ...(creds.storage === undefined ? { storage: null } : storageFields(creds.storage)),
     expiresOn: creds.tokenExpiresOn ?? null,
   };
 
