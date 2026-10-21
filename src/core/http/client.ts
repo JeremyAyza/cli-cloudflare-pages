@@ -15,7 +15,7 @@ const DEFAULT_RETRY_AFTER_SECONDS = 1;
 const HEADER_SAFE_TOKEN = /^[\x21-\x7e]+$/;
 
 const APPLIED_HINT =
-  'The request may or may not have been applied. Check with `cf-pages deployments list <project>` before retrying.';
+  'The request may or may not have been applied. Check the current state (`cf-pages deployments list <project>` or `cf-pages env list <project>`) before retrying.';
 const PERMISSION_HINT = `The API token needs the "Cloudflare Pages: Edit" permission (Read for read-only commands) on this account. Manage tokens: ${API_TOKENS_URL}`;
 
 export interface CfError {
@@ -121,6 +121,20 @@ function retryAfterSeconds(header: string | null): number {
   return Number.isFinite(seconds) && seconds >= 0 ? Math.ceil(seconds) : DEFAULT_RETRY_AFTER_SECONDS;
 }
 
+/**
+ * True when any segment of `path` is `.` or `..`, written raw or with percent-encoded dots (`%2e`, `%2E`, `.%2e`…).
+ * `fetch` and many servers resolve those segments, so `/deployments/..` would address a different endpoint than the one
+ * the caller meant. Encoded separators (`%2f`, `%5c`) and raw backslashes count as separators, because a server that
+ * decodes them would see a dot segment too. The query string and fragment are not part of the path.
+ */
+function hasDotSegment(path: string): boolean {
+  const pathOnly = path.split(/[?#]/, 1)[0] ?? '';
+  return pathOnly
+    .replace(/%2e/gi, '.')
+    .split(/\/|\\|%2f|%5c/i)
+    .some((segment) => segment === '.' || segment === '..');
+}
+
 function transportReason(cause: unknown): string {
   if (cause instanceof Error) {
     const inner = (cause.cause as { code?: unknown } | undefined)?.code;
@@ -167,6 +181,15 @@ export class ApiClient {
     if (o.json !== undefined && o.form !== undefined)
       throw new Error('A request cannot have both a json and a form body.');
     const path = o.path.startsWith('/') ? o.path : `/${o.path}`;
+    if (hasDotSegment(path)) {
+      throw new CliError(
+        'usage',
+        `Refusing to call the Cloudflare API with a "." or ".." path segment (${o.method} ${path}).`,
+        {
+          hint: 'Project names, deployment IDs and variable names cannot be "." or "..". Check the value you passed.',
+        },
+      );
+    }
     const search = this.#search(o.query);
     const readOnly = o.method === 'GET';
     const line = `${o.method} ${path}`;

@@ -17,7 +17,7 @@ import { server } from '../setup.js';
 
 const PROJECTS = `/accounts/${ACCT}/pages/projects`;
 const APPLIED_HINT =
-  'The request may or may not have been applied. Check with `cf-pages deployments list <project>` before retrying.';
+  'The request may or may not have been applied. Check the current state (`cf-pages deployments list <project>` or `cf-pages env list <project>`) before retrying.';
 const INFO = { page: 1, per_page: 25, count: 1, total_count: 1, total_pages: 1 };
 
 function makeClient(opts: Partial<ApiClientOptions> = {}) {
@@ -79,6 +79,66 @@ describe('ApiClient construction', () => {
       expect(JSON.stringify(err, Object.getOwnPropertyNames(err))).not.toContain(TEST_TOKEN);
     },
   );
+});
+
+describe('ApiClient path safety', () => {
+  const DEPLOYMENTS = `/accounts/${ACCT}/pages/projects/site/deployments`;
+
+  it.each([
+    ['raw ..', `${DEPLOYMENTS}/..`],
+    ['raw .', `${DEPLOYMENTS}/.`],
+    ['percent-encoded %2e%2e', `${DEPLOYMENTS}/%2e%2e`],
+    ['upper-case %2E%2E', `${DEPLOYMENTS}/%2E%2E`],
+    ['mixed .%2e', `${DEPLOYMENTS}/.%2e`],
+    ['mixed %2e.', `${DEPLOYMENTS}/%2e.`],
+    ['mixed-case %2e%2E', `${DEPLOYMENTS}/%2e%2E`],
+    ['single %2e', `${DEPLOYMENTS}/%2e`],
+    ['in the middle', `/accounts/${ACCT}/pages/projects/%2e%2e/deployments`],
+    ['before a query-free tail', `${DEPLOYMENTS}/../latest`],
+    ['without a leading slash', 'accounts/../user'],
+    ['trailing slash after ..', `${DEPLOYMENTS}/../`],
+    ['raw backslash separator', `${DEPLOYMENTS}\\..`],
+    ['encoded slash before ..', `${DEPLOYMENTS}/x%2f..`],
+    ['encoded backslash before ..', `${DEPLOYMENTS}/x%5C%2e%2e`],
+    ['followed by a query-like tail', `${DEPLOYMENTS}/..?x=1`],
+  ])('rejects a dot path segment (%s) with a usage error before any request is sent', async (_label, path) => {
+    const seen = recordRequests();
+    const { client, sleep } = makeClient();
+    for (const method of ['GET', 'POST', 'PATCH', 'DELETE'] as const) {
+      const err = await client.request({ method, path }).then(
+        () => {
+          throw new Error('Expected the request to be rejected.');
+        },
+        (e: unknown) => e,
+      );
+      expect(err).toMatchObject({ code: 'usage', exitCode: 2 });
+      expect((err as { hint?: string }).hint).toBeTruthy();
+    }
+    expect(seen).toHaveLength(0);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it('does not log a debug line for a rejected path', async () => {
+    const lines: string[] = [];
+    const { client } = makeClient({ debug: (line) => lines.push(line) });
+    await expect(client.request({ method: 'GET', path: `${DEPLOYMENTS}/..` })).rejects.toMatchObject({ code: 'usage' });
+    expect(lines).toEqual([]);
+  });
+
+  it.each([
+    ['dots inside a segment', `${PROJECTS}/my.site`],
+    ['an ellipsis segment', `${PROJECTS}/...`],
+    ['a dotted extension', `${PROJECTS}/site.v2.0`],
+    ['an encoded slash', `${PROJECTS}/${encodeURIComponent('a/b')}`],
+    ['a dot only in the query', `${PROJECTS}`],
+  ])('still sends a legitimate path (%s)', async (_label, path) => {
+    const seen = recordRequests();
+    server.use(http.get(cfUrl(PROJECTS), () => ok({})));
+    server.use(http.get(cfUrl(`${PROJECTS}/*`), () => ok({})));
+    await makeClient().client.request({ method: 'GET', path, query: { branch: '..' } });
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.path).toBe(path);
+  });
 });
 
 describe('ApiClient success path', () => {
@@ -224,6 +284,7 @@ describe('ApiClient retries (Review Focus 1)', () => {
     expect(err).toMatchObject({ code: 'api_error', exitCode: 6, status: 500 });
     expect(err.hint).toContain('may or may not have been applied');
     expect(err.hint).toContain('cf-pages deployments list');
+    expect(err.hint).toContain('cf-pages env list');
     expect(err.hint).toBe(APPLIED_HINT);
   });
 
