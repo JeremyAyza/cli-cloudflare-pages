@@ -74,10 +74,10 @@ Cada comando corre con un `Context` inyectable (IO, entorno, reloj, llavero), y 
   - `createRedactor(): Redactor`
   - `relativeTime(iso: string, now: Date): string`
 
-- [ ] **Step 1: Inicializar git y el proyecto**
+- [ ] **Step 1: Inicializar el proyecto.** El repo git ya existe: `main` tiene el spec y el plan, y el trabajo va en la rama `feat/cli-v1`. No se ejecuta `git init`.
 
 ```bash
-cd /Users/desarrollo/Documents/Proyectos/cli-cloudflare-pages && git init -b main
+cd /Users/desarrollo/Documents/Proyectos/cli-cloudflare-pages
 npm init -y
 npm i -D typescript@^7.0.2 tsdown@^0.23.1 vitest@^5.0.5 msw@^3.0.3 @biomejs/biome@^2.6.2 @types/node@^22 commander@^15.0.0 @commander-js/extra-typings@^15.0.0 @inquirer/prompts@^8.7.4
 npm i -O @napi-rs/keyring@^2.1.2
@@ -103,7 +103,7 @@ it('24+ chars: 4 + ••• + 4', () => expect(maskValue(s(24))).toBe('abcd•�
 it('23 chars: 2 + ••• + 2', () => expect(maskValue(s(23))).toBe('ab•••vw'));
 it('12 chars: 2 + ••• + 2', () => expect(maskValue(s(12))).toBe('ab•••kl'));
 it('11 chars: fully hidden', () => expect(maskValue(s(11))).toBe('•••••'));
-it('describe adds length', () => expect(describeMasked(s(40))).toBe('abcd•••DEFG (40)'));
+it('describe adds length', () => expect(describeMasked(s(40))).toBe('abcd•••ABCD (40)'));
 it('empty value', () => expect(describeMasked('')).toBe('(empty)'));
 it('counts code points, never splits emoji', () =>
   expect(describeMasked('🔑'.repeat(24))).toBe('🔑🔑🔑🔑•••🔑🔑🔑🔑 (24)'));
@@ -136,7 +136,7 @@ it.each([['2026-10-21T11:59:30Z','just now'],['2026-10-21T11:55:00Z','5m ago'],[
 
 - [ ] **Step 5: Verificar** — `npx vitest run tests/core && npm run typecheck && npm run lint` → PASS.
 
-- [ ] **Step 6: Commit** (incluye el spec y este plan)
+- [ ] **Step 6: Commit** (el spec y el plan ya están en `main`)
 
 ```bash
 git add -A && git commit -m "chore: scaffold cf-pages with masking, redaction and time utils"
@@ -939,6 +939,13 @@ it('--open in TTY calls openUrl once; without TTY prints URL and notes "--open i
   - Ejecuta `npm pack --dry-run --json` y falla si `unpackedSize >= 3_000_000`.
   - También falla si `package.json` tiene `dependencies` no vacías, o si la lista de archivos incluye algo fuera de `dist/`, `README.md`, `LICENSE`, `CHANGELOG.md` o `package.json`.
   - Comprobar con `npm run build && npm run check:size` → PASS, imprimiendo el tamaño.
+  - **Smoke del tarball:**
+    1. `npm pack` a un directorio temporal.
+    2. En otro directorio temporal vacío: `npm init -y && npm i <tarball> --omit=optional`.
+    3. `npx cf-pages --help` debe salir con 0 y mostrar el disclaimer.
+    4. `npx cf-pages whoami` debe salir con 3 (no hay login), sin errores de módulo no encontrado.
+
+    Esto prueba que el bundle no depende de paquetes sin instalar y que la ausencia de `@napi-rs/keyring` no rompe el CLI. Se añade también como paso del CI.
 - [ ] **Step 2: Revisar la cobertura de Pages del CLI oficial `cf`.** Se lee la documentación y el repo de `cf` (https://blog.cloudflare.com/cloudflare-cf-cli-launch/ y developers.cloudflare.com) **sin instalarlo ni ejecutarlo**. Se anotan en tres líneas qué comandos de Pages ofrece y cuáles faltan frente a `cf-pages`, para usarlas en la sección "Why cf-pages?" del README.
 - [ ] **Step 3: Escribir `README.md`** (en inglés). Secciones en este orden:
   1. Disclaimer.
