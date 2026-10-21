@@ -3,6 +3,9 @@ import { server } from '../setup.js';
 
 export const ACCT = '0123456789abcdef0123456789abcdef';
 
+/** Token held by the fake keyring of `loggedIn()`. Shaped like an account token but not a real one. */
+export const TEST_TOKEN = 'cfat_test_token_value_1234567890';
+
 const API_BASE = 'https://api.cloudflare.com/client/v4';
 const API_PREFIX = new URL(API_BASE).pathname;
 

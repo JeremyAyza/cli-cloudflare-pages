@@ -1,5 +1,6 @@
 import { appendFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import type { Output } from './output.js';
 
 export const AUDIT_FILE = 'audit.log';
 
@@ -13,7 +14,8 @@ export interface AuditEntry {
   keys?: string[];
   result: 'ok' | 'error';
   errorCode?: string;
-  credentialSource: 'env' | 'keyring' | 'file';
+  /** Absent for commands that use no credentials, such as `settings set`. */
+  credentialSource?: 'env' | 'keyring' | 'file';
 }
 
 /**
@@ -27,5 +29,12 @@ export async function appendAudit(dir: string, entry: AuditEntry): Promise<boole
     return true;
   } catch {
     return false;
+  }
+}
+
+/** `appendAudit`, but a failure is reported as a warning so the person knows the log is incomplete. */
+export async function appendAuditOrWarn(out: Pick<Output, 'warn'>, dir: string, entry: AuditEntry): Promise<void> {
+  if (!(await appendAudit(dir, entry))) {
+    out.warn(`Could not write to the audit log (${join(dir, AUDIT_FILE)}).`);
   }
 }

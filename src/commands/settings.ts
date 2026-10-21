@@ -1,4 +1,5 @@
 import type { Command } from '@commander-js/extra-typings';
+import { appendAuditOrWarn } from '../core/audit.js';
 import { readConfig, writeConfig } from '../core/config/store.js';
 import { canPrompt } from '../core/confirm.js';
 import type { Context } from '../core/context.js';
@@ -91,7 +92,22 @@ export function registerSettings(program: Command, ctx: Context): void {
 
       // Read again: the prompt can stay open for a while and other commands (login) write to the same file.
       const latest = await readConfig(ctx.configDir);
-      await writeConfig(ctx.configDir, { ...latest, settings: { ...latest.settings, [key]: value } });
+      // Changing a protection is security-relevant, so both outcomes are logged (key names only, never values).
+      const audit = (result: 'ok' | 'error', errorCode?: string) =>
+        appendAuditOrWarn(out, ctx.configDir, {
+          ts: ctx.now().toISOString(),
+          command: 'settings set',
+          keys: [key],
+          result,
+          ...(errorCode === undefined ? {} : { errorCode }),
+        });
+      try {
+        await writeConfig(ctx.configDir, { ...latest, settings: { ...latest.settings, [key]: value } });
+      } catch (err) {
+        await audit('error', err instanceof CliError ? err.code : 'unexpected');
+        throw err;
+      }
+      await audit('ok');
       out.data({ [key]: value }, () => `${key} set to ${value}.`);
     });
 }

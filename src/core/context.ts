@@ -2,6 +2,8 @@ import { homedir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import { VERSION } from '../version.js';
 import { defaultConfigDir } from './config/paths.js';
+import { openKeyringStore } from './credentials/keyring-store.js';
+import type { SecretStore } from './credentials/types.js';
 import { createNodeIO, type IO } from './io.js';
 import { createRedactor, type Redactor } from './redact.js';
 
@@ -15,6 +17,8 @@ export interface Context {
   configDir: string;
   redactor: Redactor;
   version: string;
+  /** Opens the OS keychain, or rejects with `keyring_unavailable`. Tests inject an in-memory one. */
+  openKeyring(): Promise<SecretStore>;
 }
 
 export function createNodeContext(): Context {
@@ -27,5 +31,6 @@ export function createNodeContext(): Context {
     configDir: defaultConfigDir(process.env, process.platform, homedir()),
     redactor: createRedactor(),
     version: VERSION,
+    openKeyring: openKeyringStore,
   };
 }

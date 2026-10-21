@@ -1,7 +1,8 @@
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Settings } from '../confirm.js';
 import { CliError } from '../errors.js';
+import { writePrivateFile } from '../private-file.js';
 
 export const CONFIG_FILE = 'config.json';
 
@@ -97,19 +98,7 @@ export async function readConfig(dir: string): Promise<ConfigFile> {
   return parseConfig(path, parsed);
 }
 
-/**
- * Writes `config.json` atomically: the directory is created with 0700, the content goes to a temporary file
- * created with 0600 and is then renamed over the target, so a crash never leaves a half-written config.
- */
+/** Writes `config.json` atomically and privately (directory 0700, file 0600): see `writePrivateFile`. */
 export async function writeConfig(dir: string, cfg: ConfigFile): Promise<void> {
-  await mkdir(dir, { recursive: true, mode: 0o700 });
-  const path = join(dir, CONFIG_FILE);
-  const tmp = `${path}.${process.pid}.tmp`;
-  try {
-    await writeFile(tmp, `${JSON.stringify(cfg, null, 2)}\n`, { mode: 0o600 });
-    await rename(tmp, path);
-  } catch (err) {
-    await rm(tmp, { force: true });
-    throw err;
-  }
+  await writePrivateFile(dir, CONFIG_FILE, `${JSON.stringify(cfg, null, 2)}\n`);
 }

@@ -1,7 +1,8 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { AUDIT_FILE } from '../../src/core/audit.js';
 import { CONFIG_FILE, type ConfigFile, readConfig, writeConfig } from '../../src/core/config/store.js';
 import { runCli } from '../helpers/run.js';
 
@@ -29,6 +30,10 @@ const strict: ConfigFile = {
 
 async function configText(): Promise<string | undefined> {
   return readFile(join(configDir, CONFIG_FILE), 'utf8').catch(() => undefined);
+}
+
+async function auditText(): Promise<string | undefined> {
+  return readFile(join(configDir, AUDIT_FILE), 'utf8').catch(() => undefined);
 }
 
 describe('settings get', () => {
@@ -227,6 +232,95 @@ describe('settings set', () => {
   it('missing arguments → exit 2', async () => {
     expect((await runCli(['settings', 'set'], { configDir })).exitCode).toBe(2);
     expect((await runCli(['settings', 'set', 'productionRequiresTty'], { configDir })).exitCode).toBe(2);
+  });
+});
+
+describe('settings set audit', () => {
+  const NOW = new Date('2026-10-21T12:00:00.000Z');
+
+  it('a successful change appends one audit line: command, key names, result, no value, no credential source', async () => {
+    await writeConfig(configDir, strict);
+    const r = await runCli(['settings', 'set', 'productionRequiresTty', 'false'], {
+      configDir,
+      tty: true,
+      answers: [true],
+      now: NOW,
+    });
+    expect(r.exitCode).toBe(0);
+    const text = await auditText();
+    expect(text?.endsWith('\n')).toBe(true);
+    expect(
+      text
+        ?.trimEnd()
+        .split('\n')
+        .map((line) => JSON.parse(line)),
+    ).toEqual([
+      {
+        ts: '2026-10-21T12:00:00.000Z',
+        command: 'settings set',
+        keys: ['productionRequiresTty'],
+        result: 'ok',
+      },
+    ]);
+  });
+
+  it('not audited when nothing was written: refusal, decline, dry-run, bad usage', async () => {
+    await writeConfig(configDir, strict);
+    const runs = [
+      runCli(['settings', 'set', 'productionRequiresTty', 'false'], { configDir }),
+      runCli(['settings', 'set', 'productionRequiresTty', 'false'], { configDir, tty: true, answers: [false] }),
+      runCli(['settings', 'set', 'productionRequiresTty', 'false', '--dry-run'], { configDir, tty: true }),
+      runCli(['settings', 'set', 'productionRequiresTty', 'maybe'], { configDir, tty: true }),
+    ];
+    for (const run of runs) await run;
+    expect(await auditText()).toBeUndefined();
+  });
+
+  it('reads (settings get) are not audited', async () => {
+    await runCli(['settings', 'get'], { configDir });
+    expect(await auditText()).toBeUndefined();
+  });
+
+  const posixNonRoot = process.platform === 'win32' || process.getuid?.() === 0 ? it.skip : it;
+
+  posixNonRoot('a write that fails is audited as an error, and the original error is still reported', async () => {
+    await writeConfig(configDir, strict);
+    // An existing 0600 log stays appendable inside a read-only directory; the config cannot be replaced there.
+    await writeFile(join(configDir, AUDIT_FILE), '', { mode: 0o600 });
+    await chmod(configDir, 0o500);
+    try {
+      const r = await runCli(['settings', 'set', 'productionRequiresTty', 'false'], {
+        configDir,
+        tty: true,
+        answers: [true],
+        now: NOW,
+      });
+      expect(r.exitCode).toBe(1);
+      expect(JSON.parse((await auditText()) ?? '')).toEqual({
+        ts: '2026-10-21T12:00:00.000Z',
+        command: 'settings set',
+        keys: ['productionRequiresTty'],
+        result: 'error',
+        errorCode: 'unexpected',
+      });
+    } finally {
+      await chmod(configDir, 0o700);
+    }
+    expect((await readConfig(configDir)).settings.productionRequiresTty).toBe(true);
+  });
+
+  it('an audit log that cannot be written only warns: the change still succeeds', async () => {
+    // A directory where the log should be makes every append fail, on every platform.
+    await mkdir(join(configDir, AUDIT_FILE));
+    const r = await runCli(['settings', 'set', 'productionRequiresTty', 'true'], {
+      configDir,
+      tty: true,
+      answers: [true],
+    });
+    expect(r.exitCode).toBe(0);
+    expect(r.stderr).toContain('Warning: Could not write to the audit log');
+    expect(r.stdout).toBe('productionRequiresTty set to true.\n');
+    expect((await readConfig(configDir)).settings.productionRequiresTty).toBe(true);
   });
 });
 

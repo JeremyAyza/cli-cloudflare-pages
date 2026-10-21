@@ -3,12 +3,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Command } from '@commander-js/extra-typings';
 import { afterAll } from 'vitest';
+import { readConfig, writeConfig } from '../../src/core/config/store.js';
 import type { Context } from '../../src/core/context.js';
+import { KEYRING_HINT, PROFILE, type SecretStore } from '../../src/core/credentials/types.js';
+import { CliError } from '../../src/core/errors.js';
 import type { IO, Prompts } from '../../src/core/io.js';
 import { createRedactor } from '../../src/core/redact.js';
 import { main } from '../../src/main.js';
 import { VERSION } from '../../src/version.js';
-import { settleRecordedRequests } from './cf.js';
+import { ACCT, settleRecordedRequests, TEST_TOKEN } from './cf.js';
 
 export type Answer = string | boolean;
 
@@ -103,6 +106,11 @@ export interface RunOptions extends FakeIOOptions {
   now?: Date;
   /** Adds extra commands to the program (receives the test `Context`). Mirrors `main`'s `configure` hook. */
   configure?: (program: Command, ctx: Context) => void;
+  /**
+   * The OS keychain, in memory: account → token. Defaults to an empty one, so the real keychain is never touched.
+   * `'unavailable'` makes `ctx.openKeyring()` fail like a machine without a secure store.
+   */
+  keyring?: Map<string, string> | 'unavailable';
 }
 
 export interface RunResult {
@@ -120,16 +128,31 @@ afterAll(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
-/** Runs the CLI end to end with a fake IO and returns its exit code and captured output. Never exits the process. */
-export async function runCli(args: string[], opts: RunOptions = {}): Promise<RunResult> {
+async function makeTempDir(): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), 'cf-pages-test-'));
+  tempDirs.push(dir);
+  return dir;
+}
+
+/** A `SecretStore` backed by a plain map, standing in for the OS keychain. */
+export function fakeKeyringStore(entries: Map<string, string>): SecretStore {
+  return {
+    kind: 'keyring',
+    get: async (account) => entries.get(account) ?? null,
+    set: async (account, secret) => {
+      entries.set(account, secret);
+    },
+    delete: async (account) => entries.delete(account),
+  };
+}
+
+/** The `Context` and fake IO that `runCli` uses, for tests that exercise core code without going through commander. */
+export async function createTestContext(opts: RunOptions = {}): Promise<{ ctx: Context; io: FakeIO }> {
   const io = fakeIO(opts);
-  let configDir = opts.configDir;
-  if (configDir === undefined) {
-    configDir = await mkdtemp(join(tmpdir(), 'cf-pages-test-'));
-    tempDirs.push(configDir);
-  }
+  const configDir = opts.configDir ?? (await makeTempDir());
   // Virtual clock: `sleep` resolves immediately but advances `now`, so polling loops and timeouts stay deterministic.
   let clock = (opts.now ?? new Date()).getTime();
+  const keyring = opts.keyring ?? new Map<string, string>();
   const ctx: Context = {
     io,
     env: opts.env ?? {},
@@ -141,7 +164,42 @@ export async function runCli(args: string[], opts: RunOptions = {}): Promise<Run
     configDir,
     redactor: createRedactor(),
     version: VERSION,
+    openKeyring: async () => {
+      if (keyring === 'unavailable') {
+        throw new CliError('keyring_unavailable', 'No secure credential store is available on this system.', {
+          hint: KEYRING_HINT,
+        });
+      }
+      return fakeKeyringStore(keyring);
+    },
   };
+  return { ctx, io };
+}
+
+/**
+ * Options for a machine where `cf-pages login` has already run: a `default` profile ('Acme', `ACCT`, keyring storage,
+ * account token) in a temporary config directory, and the token `TEST_TOKEN` in the fake keyring under `default`.
+ * Anything in `opts` (env, tty, answers, a keyring map…) is kept.
+ */
+export async function loggedIn(opts: RunOptions = {}): Promise<RunOptions> {
+  const configDir = opts.configDir ?? (await makeTempDir());
+  const config = await readConfig(configDir);
+  config.profiles.default = {
+    label: 'Acme',
+    accountId: ACCT,
+    storage: 'keyring',
+    tokenType: 'account',
+    createdAt: '2026-10-21T12:00:00.000Z',
+  };
+  await writeConfig(configDir, config);
+  const keyring = opts.keyring ?? new Map<string, string>();
+  if (keyring !== 'unavailable') keyring.set(PROFILE, TEST_TOKEN);
+  return { ...opts, configDir, keyring };
+}
+
+/** Runs the CLI end to end with a fake IO and returns its exit code and captured output. Never exits the process. */
+export async function runCli(args: string[], opts: RunOptions = {}): Promise<RunResult> {
+  const { ctx, io } = await createTestContext(opts);
   const exitCode = await main(args, ctx, (program) => opts.configure?.(program, ctx));
   await settleRecordedRequests();
   return {
