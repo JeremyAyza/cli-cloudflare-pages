@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { http } from 'msw';
@@ -458,6 +458,30 @@ describe('login (non-interactive)', () => {
     expect(requests).toHaveLength(0);
   });
 
+  it('a token glued to an option with = is never echoed, in human or --json mode', async () => {
+    const requests = recordRequests();
+    for (const option of ['--token-stdin', '--insecure-storage', '--api-token', '--account-id', '--yes']) {
+      for (const json of [false, true]) {
+        const keyring = new Map<string, string>();
+        const argv = ['login', `${option}=${LEGACY_TOKEN}`, ...(json ? ['--json'] : [])];
+        const r = await runCli(argv, { tty: true, answers: [], keyring, configDir });
+        const where = `${option} ${json ? 'json' : 'human'}`;
+        expect(r.stdout, where).not.toContain(LEGACY_TOKEN);
+        expect(r.stderr, where).not.toContain(LEGACY_TOKEN);
+        expect(r.prompts, where).toHaveLength(0);
+        await expectNothingStored(keyring);
+      }
+    }
+    // Where commander rejects the option, only its name is reported.
+    const unknown = await runCli(['login', `--api-token=${LEGACY_TOKEN}`, '--json'], { configDir });
+    expect(unknown.exitCode).toBe(2);
+    expect(unknown.json<{ error: { message: string } }>().error.message).toBe("unknown option '--api-token'");
+    const glued = await runCli(['login', `--token-stdin=${LEGACY_TOKEN}`, '--json'], { configDir });
+    expect(glued.exitCode).toBe(2);
+    expect(glued.json<{ error: { message: string } }>().error.message).toBe("unknown option '--token-stdin'");
+    expect(requests).toHaveLength(0);
+  });
+
   it('login --token explains why and suggests the safe ways', async () => {
     const r = await runCli(['login', '--token', LEGACY_TOKEN, '--json'], { configDir });
     const { error } = r.json<{ error: { code: string; message: string; hint?: string } }>();
@@ -652,6 +676,132 @@ describe('login --insecure-storage', () => {
     });
     await expectNoSecret(human, TOKEN);
     await expectNoSecret(json, TOKEN);
+  });
+});
+
+describe('login rollback when the profile cannot be written', () => {
+  /** The probe succeeds, and then a directory sits where the config file's temporary copy must go: only writeConfig fails. */
+  function breakConfigWrites() {
+    mockCloudflare();
+    server.use(
+      http.get(PROJECTS, async () => {
+        await mkdir(join(configDir, `config.json.${process.pid}.tmp`), { recursive: true });
+        return ok([], EMPTY_PAGE);
+      }),
+    );
+  }
+  const clearBreakage = () => rm(join(configDir, `config.json.${process.pid}.tmp`), { recursive: true, force: true });
+
+  it('first login: the new token is removed again and the original error is reported', async () => {
+    breakConfigWrites();
+    const keyring = new Map<string, string>();
+    const r = await runCli(STDIN_ARGS, { stdin: TOKEN, keyring, configDir });
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr).toContain('Error:');
+    expect(keyring.size).toBe(0);
+    expect(await readText(CONFIG_FILE)).toBeUndefined();
+    expect(await readText(AUDIT_FILE)).toBeUndefined();
+    await expectNoSecret(r, TOKEN);
+  });
+
+  it('first login with --insecure-storage: no plain-text file is left behind', async () => {
+    breakConfigWrites();
+    const r = await runCli([...STDIN_ARGS, '--insecure-storage'], { stdin: TOKEN, keyring: 'unavailable', configDir });
+    expect(r.exitCode).toBe(1);
+    expect(await readText(CREDENTIALS_FILE)).toBeUndefined();
+  });
+
+  it('replacement in the same store: the old token is put back and the old profile still matches it', async () => {
+    breakConfigWrites();
+    const opts = await loggedIn({ configDir, stdin: NEW_TOKEN });
+    const before = await readText(CONFIG_FILE);
+    const r = await runCli([...STDIN_ARGS, '--yes'], opts);
+    expect(r.exitCode).toBe(1);
+    expect((opts.keyring as Map<string, string>).get(PROFILE)).toBe(TEST_TOKEN);
+    expect(await readText(CONFIG_FILE)).toBe(before);
+    expect((await readConfig(configDir)).profiles.default).toMatchObject({ label: 'Acme', storage: 'keyring' });
+    await expectNoSecret(r, NEW_TOKEN);
+
+    // The old login still works afterwards.
+    await clearBreakage();
+    server.use(http.get(ACCOUNT_VERIFY, () => ok({ id: 'tok1', status: 'active' })));
+    const who = await runCli(['whoami'], opts);
+    expect(who.exitCode).toBe(0);
+  });
+
+  it('replacement in the same plain-text file: the old token is put back, other entries stay', async () => {
+    mockCloudflare();
+    const first = await runCli([...STDIN_ARGS, '--insecure-storage'], {
+      stdin: TOKEN,
+      keyring: 'unavailable',
+      configDir,
+    });
+    expect(first.exitCode).toBe(0);
+    await writeFile(join(configDir, CREDENTIALS_FILE), JSON.stringify({ [PROFILE]: TOKEN, other: 'keep-me' }), {
+      mode: 0o600,
+    });
+    breakConfigWrites();
+    const r = await runCli([...STDIN_ARGS, '--insecure-storage', '--yes'], {
+      stdin: NEW_TOKEN,
+      keyring: 'unavailable',
+      configDir,
+    });
+    expect(r.exitCode).toBe(1);
+    expect(JSON.parse((await readText(CREDENTIALS_FILE)) ?? '')).toEqual({ [PROFILE]: TOKEN, other: 'keep-me' });
+    expect((await readConfig(configDir)).profiles.default).toMatchObject({ storage: 'file' });
+  });
+
+  it('replacement keyring → file: no new plain-text token is orphaned and the keyring token stays', async () => {
+    breakConfigWrites();
+    const opts = await loggedIn({ configDir, stdin: NEW_TOKEN });
+    const r = await runCli([...STDIN_ARGS, '--yes', '--insecure-storage'], opts);
+    expect(r.exitCode).toBe(1);
+    expect(await readText(CREDENTIALS_FILE)).toBeUndefined();
+    expect((opts.keyring as Map<string, string>).get(PROFILE)).toBe(TEST_TOKEN);
+    expect((await readConfig(configDir)).profiles.default).toMatchObject({ storage: 'keyring' });
+    await expectNoSecret(r, NEW_TOKEN);
+  });
+
+  it('replacement file → keyring: the new keyring entry is removed and the file keeps the old token', async () => {
+    mockCloudflare();
+    const first = await runCli([...STDIN_ARGS, '--insecure-storage'], {
+      stdin: TOKEN,
+      keyring: 'unavailable',
+      configDir,
+    });
+    expect(first.exitCode).toBe(0);
+    breakConfigWrites();
+    const keyring = new Map<string, string>();
+    const r = await runCli([...STDIN_ARGS, '--yes'], { stdin: NEW_TOKEN, keyring, configDir });
+    expect(r.exitCode).toBe(1);
+    expect(keyring.size).toBe(0);
+    expect(JSON.parse((await readText(CREDENTIALS_FILE)) ?? '')).toEqual({ [PROFILE]: TOKEN });
+    expect((await readConfig(configDir)).profiles.default).toMatchObject({ storage: 'file' });
+  });
+
+  it('warns when even the rollback fails, and still reports the original error', async () => {
+    breakConfigWrites();
+    const keyring = new Map<string, string>();
+    const r = await runCli(STDIN_ARGS, {
+      stdin: TOKEN,
+      configDir,
+      configure: (_program, ctx) => {
+        ctx.openKeyring = async () => ({
+          kind: 'keyring',
+          get: async () => null,
+          set: async (account, secret) => {
+            keyring.set(account, secret);
+          },
+          delete: async () => {
+            throw new Error('keychain is locked');
+          },
+        });
+      },
+    });
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr).toContain('Warning:');
+    expect(r.stderr).toContain('cf-pages logout');
+    expect(r.stderr).not.toContain('keychain is locked');
   });
 });
 

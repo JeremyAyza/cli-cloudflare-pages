@@ -315,6 +315,8 @@ async function runLogin(ctx: Context, flags: GlobalFlags, opts: LoginOptions): P
     return;
   }
 
+  // What this store holds now: put back if the login cannot be completed, so a failure changes nothing.
+  const before = await store.get(PROFILE);
   await store.set(PROFILE, token);
   try {
     // Read again: the questions can take a while and `settings set` writes the same file.
@@ -329,8 +331,15 @@ async function runLogin(ctx: Context, flags: GlobalFlags, opts: LoginOptions): P
     };
     await writeConfig(ctx.configDir, { ...config, profiles: { ...config.profiles, default: profile } });
   } catch (err) {
-    // No profile means nothing would ever use (or delete) the token that was just saved.
-    if (previous === undefined) await store.delete(PROFILE).catch(() => false);
+    // The old profile (if any) is still on disk: it must keep pointing at the token it was saved with, and the new
+    // token must not stay behind, least of all in a plain-text file. The original error is the one reported.
+    try {
+      await (before === null ? store.delete(PROFILE) : store.set(PROFILE, before));
+    } catch {
+      out.warn(
+        `The new token could not be removed again after the failure. Run \`cf-pages logout\`, or delete the "${PROFILE}" entry from ${storage === 'keyring' ? `the OS keyring (service "${KEYRING_SERVICE}")` : join(ctx.configDir, CREDENTIALS_FILE)}.`,
+      );
+    }
     throw err;
   }
   if (previous !== undefined && previous.storage !== storage) await removeStaleToken(ctx, out, previous.storage);

@@ -52,9 +52,51 @@ export function createProgram(ctx: Context): Command {
 
 const USAGE_HINT = 'Run "cf-pages --help" to see the available commands and options.';
 
+/**
+ * Commander quotes the offending argv in its messages ("unknown option '--x=VALUE'", "… but got 1: VALUE"), and a
+ * stray argument or `--flag=VALUE` can be an API token the redactor cannot recognise. So the values are cut out and
+ * only names stay: the option before any `=`, the counts, and the "did you mean" suggestion, which comes from our own
+ * option and command names.
+ */
+function withoutArgvValues(code: string, message: string): string {
+  switch (code) {
+    case 'commander.unknownOption': {
+      const m = /^unknown option '([\s\S]*?)'((?:\n\(Did you mean [^\n]*\?\))?)$/.exec(message);
+      return m ? `unknown option '${(m[1] ?? '').split('=')[0]}'${m[2] ?? ''}` : 'unknown option';
+    }
+    case 'commander.excessArguments':
+      return message.replace(
+        /^(too many arguments(?: for '[^']*')?\. Expected \d+ arguments? but got \d+):[\s\S]*$/,
+        '$1.',
+      );
+    case 'commander.unknownCommand': {
+      const m = /^unknown command '([\s\S]*?)'((?:\n\(Did you mean [^\n]*\?\))?)$/.exec(message);
+      // A typo of a command name is useful to see; anything that is not a short plain word could be a secret.
+      const name = m?.[1] !== undefined && /^[A-Za-z][A-Za-z0-9-]{0,24}$/.test(m[1]) ? m[1] : '[redacted]';
+      return `unknown command '${name}'${m?.[2] ?? ''}`;
+    }
+    case 'commander.invalidArgument':
+      return message
+        .replace(/^(option '[^']*') argument '[\s\S]*?' is invalid\./, '$1 argument is invalid.')
+        .replace(
+          /^(option '[^']*') value '[\s\S]*?' from env '([^']*)' is invalid\./,
+          "$1 value from env '$2' is invalid.",
+        )
+        .replace(
+          /^command-argument value '[\s\S]*?' is invalid for argument '([^']*)'\./,
+          "command-argument value is invalid for argument '$1'.",
+        );
+    default:
+      return message;
+  }
+}
+
 function usageError(err: CommanderError): CliError {
   // 'commander.help' means a command group was invoked without a subcommand (commander already printed its help).
-  const message = err.code === 'commander.help' ? 'A command is required.' : err.message.replace(/^error:\s*/i, '');
+  const message =
+    err.code === 'commander.help'
+      ? 'A command is required.'
+      : withoutArgvValues(err.code, err.message.replace(/^error:\s*/i, ''));
   return new CliError('usage', message, { hint: USAGE_HINT, cause: err });
 }
 
