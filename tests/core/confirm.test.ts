@@ -86,6 +86,40 @@ describe('confirmMutation: preview', () => {
     await expect(result).resolves.toBeUndefined();
     expect(io.prompts).toHaveLength(0);
   });
+
+  it('no tty + --confirm my-site → resolves', async () => {
+    const { io, result } = run(preview, { flags: { confirm: 'my-site' } });
+    await expect(result).resolves.toBeUndefined();
+    expect(io.prompts).toHaveLength(0);
+  });
+
+  it('tty + --confirm my-site → resolves without prompting', async () => {
+    const { io, result } = run(preview, { io: { tty: true }, flags: { confirm: 'my-site' } });
+    await expect(result).resolves.toBeUndefined();
+    expect(io.prompts).toHaveLength(0);
+  });
+
+  it('--confirm other → usage, without prompting (no tty and tty)', async () => {
+    for (const tty of [false, true]) {
+      const { io, result } = run(preview, { io: { tty }, flags: { confirm: 'other' } });
+      const err = await failure(result);
+      expect(err.code).toBe('usage');
+      expect(err.exitCode).toBe(2);
+      expect(err.hint).toContain('--confirm my-site');
+      expect(io.prompts).toHaveLength(0);
+    }
+  });
+
+  it('--yes does not excuse a --confirm that names another project', async () => {
+    const { result } = run(preview, { flags: { yes: true, confirm: 'other' } });
+    expect((await failure(result)).code).toBe('usage');
+  });
+
+  it('the no-flag error offers both --yes and --confirm my-site', async () => {
+    const err = await failure(run(preview).result);
+    expect(err.hint).toContain('--yes');
+    expect(err.hint).toContain('--confirm my-site');
+  });
 });
 
 describe('confirmMutation: production', () => {
