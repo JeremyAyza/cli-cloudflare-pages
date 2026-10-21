@@ -427,7 +427,7 @@ it('debug lines never contain the token or bodies', ...);               // debug
 
 - [ ] **Step 2: Ejecutar** — FAIL.
 - [ ] **Step 3: Implementar** según §6.4 y la Review Focus 1.
-  - Hint para mutaciones con 5xx o timeout: `The request may or may not have been applied. Check with \`cf-pages deployments list <project>\` before retrying.`
+  - Hint para mutaciones con 5xx o timeout (Ruling 15): `The request may or may not have been applied. Check the current state (\`cf-pages deployments list <project>\` or \`cf-pages env list <project>\`) before retrying.`
   - Hint para 403: `The API token needs the "Cloudflare Pages: Edit" permission (Read for read-only commands) on this account. Manage tokens: <API_TOKENS_URL>`
   - El timeout usa `AbortSignal.timeout`.
 - [ ] **Step 4: Verificar** — PASS.
