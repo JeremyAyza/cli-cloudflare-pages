@@ -54,15 +54,37 @@ function usageError(err: CommanderError): CliError {
 }
 
 /** Parse failures happen before commander finishes reading options, so flags come straight from argv. */
-function flagsFromArgv(argv: string[]): GlobalFlags {
+function flagsFromArgv(argv: string[], env: Context['env']): GlobalFlags {
   return {
     json: argv.includes('--json'),
     yes: false,
     dryRun: false,
     input: !argv.includes('--no-input'),
-    color: !argv.includes('--no-color'),
+    color: !argv.includes('--no-color') && !env.NO_COLOR && env.TERM !== 'dumb',
     debug: argv.includes('--debug'),
   };
+}
+
+function redactDeep(value: unknown, redact: (text: string) => string): unknown {
+  if (typeof value === 'string') return redact(value);
+  if (Array.isArray(value)) return value.map((item) => redactDeep(item, redact));
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, redactDeep(item, redact)]));
+  }
+  return value;
+}
+
+/**
+ * Every error that reaches the user passes through here once: commander echoes offending argv (which may be a
+ * token) and any command may build a message from user input, so message, hint and string details are redacted.
+ */
+function redactError(err: CliError, ctx: Context): CliError {
+  const redact = (text: string) => ctx.redactor.apply(text);
+  return new CliError(err.code, redact(err.message), {
+    cause: err.cause,
+    ...(err.hint !== undefined ? { hint: redact(err.hint) } : {}),
+    ...(err.details !== undefined ? { details: redactDeep(err.details, redact) as Record<string, unknown> } : {}),
+  });
 }
 
 /**
@@ -85,20 +107,19 @@ export async function main(argv: string[], ctx: Context, configure?: (program: C
       return 0;
     }
     const parseFailure = err instanceof CommanderError;
-    const flags = parseFailure ? flagsFromArgv(argv) : readGlobalFlags(program);
+    const flags = parseFailure ? flagsFromArgv(argv, ctx.env) : readGlobalFlags(program, ctx.env);
     let cliError: CliError;
     if (err instanceof CliError) {
       cliError = err;
     } else if (err instanceof CommanderError) {
       cliError = usageError(err);
     } else {
-      const message = err instanceof Error ? err.message : String(err);
-      cliError = new CliError('unexpected', ctx.redactor.apply(message), { cause: err });
+      cliError = new CliError('unexpected', err instanceof Error ? err.message : String(err), { cause: err });
     }
     if (flags.debug && !parseFailure && err instanceof Error && err.stack) {
       ctx.io.stderr(`${ctx.redactor.apply(err.stack)}\n`);
     }
-    renderError(ctx.io, flags, cliError);
+    renderError(ctx.io, flags, redactError(cliError, ctx));
     return cliError.exitCode;
   }
 }

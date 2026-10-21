@@ -7,13 +7,12 @@ type Stream = 'stdout' | 'stderr';
 type Style = Parameters<typeof styleText>[0];
 
 /**
- * Colors `text` for the given stream. Color is off with `--no-color`, a non-empty `NO_COLOR`,
- * `TERM=dumb`, or when that stream is not a TTY.
+ * Colors `text` for the given stream, unless `flags.color` is off (`--no-color`, `NO_COLOR` and `TERM=dumb` are
+ * already folded into it by `readGlobalFlags`) or that stream is not a TTY.
  */
 export function paint(io: IO, flags: GlobalFlags, stream: Stream, format: Style, text: string): string {
   const isTTY = stream === 'stdout' ? io.stdoutIsTTY : io.stderrIsTTY;
-  const noColor = process.env.NO_COLOR;
-  if (!flags.color || !isTTY || (noColor !== undefined && noColor !== '') || process.env.TERM === 'dumb') return text;
+  if (!flags.color || !isTTY) return text;
   // The decision is already made from `io`, so styleText must not second-guess it against the real process streams.
   return styleText(format, text, { validateStream: false });
 }

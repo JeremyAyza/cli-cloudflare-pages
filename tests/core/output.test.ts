@@ -1,5 +1,5 @@
 import type { Command } from '@commander-js/extra-typings';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { CliError } from '../../src/core/errors.js';
 import type { GlobalFlags } from '../../src/core/flags.js';
 import { createOutput, paint, renderError, renderTable } from '../../src/core/output.js';
@@ -146,38 +146,64 @@ describe('unexpected errors', () => {
 
 describe('paint', () => {
   const RED = '\u001b[31m';
-  afterEach(() => vi.unstubAllEnvs());
 
   it('colors a TTY stream', () => {
-    vi.stubEnv('NO_COLOR', undefined);
-    vi.stubEnv('TERM', 'xterm-256color');
     const painted = paint(fakeIO({ tty: true }), flags(), 'stderr', 'red', 'oops');
     expect(painted).toContain(RED);
     expect(painted).toContain('oops');
   });
 
-  it('no color when NO_COLOR set or stream not TTY', () => {
-    vi.stubEnv('TERM', 'xterm-256color');
-    vi.stubEnv('NO_COLOR', '1');
-    expect(paint(fakeIO({ tty: true }), flags(), 'stderr', 'red', 'oops')).toBe('oops');
-    vi.stubEnv('NO_COLOR', undefined);
+  it('no color when flags.color is off or the stream is not a TTY', () => {
+    expect(paint(fakeIO({ tty: true }), flags({ color: false }), 'stdout', 'red', 'oops')).toBe('oops');
     expect(paint(fakeIO({ tty: false }), flags(), 'stderr', 'red', 'oops')).toBe('oops');
   });
 
-  it('no color with --no-color or TERM=dumb', () => {
-    vi.stubEnv('NO_COLOR', undefined);
-    vi.stubEnv('TERM', 'xterm-256color');
-    expect(paint(fakeIO({ tty: true }), flags({ color: false }), 'stdout', 'red', 'oops')).toBe('oops');
-    vi.stubEnv('TERM', 'dumb');
-    expect(paint(fakeIO({ tty: true }), flags(), 'stdout', 'red', 'oops')).toBe('oops');
-  });
-
   it('checks the requested stream, not the other one', () => {
-    vi.stubEnv('NO_COLOR', undefined);
-    vi.stubEnv('TERM', 'xterm-256color');
     const io = { ...fakeIO(), stdoutIsTTY: true, stderrIsTTY: false };
     expect(paint(io, flags(), 'stdout', 'red', 'x')).toContain(RED);
     expect(paint(io, flags(), 'stderr', 'red', 'x')).toBe('x');
+  });
+});
+
+describe('color decision through the CLI (injected env, never process.env)', () => {
+  const ESC = '\u001b[';
+  const lost = (p: Command) => {
+    p.command('lost').action(() => {
+      throw new CliError('not_found', 'Project "my-site" was not found.', { hint: 'Try projects list.' });
+    });
+  };
+
+  it('colors error output on a TTY', async () => {
+    const r = await runCli(['lost'], { tty: true, configure: lost });
+    expect(r.stderr).toContain(ESC);
+  });
+
+  it('no color when NO_COLOR is set in the injected env', async () => {
+    const r = await runCli(['lost'], { tty: true, env: { NO_COLOR: '1' }, configure: lost });
+    expect(r.exitCode).toBe(4);
+    expect(r.stderr).not.toContain(ESC);
+    expect(r.stderr).toContain('Error: Project "my-site" was not found.');
+  });
+
+  it('an empty NO_COLOR does not disable color', async () => {
+    const r = await runCli(['lost'], { tty: true, env: { NO_COLOR: '' }, configure: lost });
+    expect(r.stderr).toContain(ESC);
+  });
+
+  it('no color when TERM=dumb', async () => {
+    const r = await runCli(['lost'], { tty: true, env: { TERM: 'dumb' }, configure: lost });
+    expect(r.stderr).not.toContain(ESC);
+  });
+
+  it('no color with --no-color or when stderr is not a TTY', async () => {
+    expect((await runCli(['lost', '--no-color'], { tty: true, configure: lost })).stderr).not.toContain(ESC);
+    expect((await runCli(['lost'], { tty: false, configure: lost })).stderr).not.toContain(ESC);
+  });
+
+  it('usage errors (parse failures) honor the injected env too', async () => {
+    expect((await runCli(['--bogus'], { tty: true })).stderr).toContain(ESC);
+    expect((await runCli(['--bogus'], { tty: true, env: { NO_COLOR: '1' } })).stderr).not.toContain(ESC);
+    expect((await runCli(['--bogus'], { tty: true, env: { TERM: 'dumb' } })).stderr).not.toContain(ESC);
   });
 });
 

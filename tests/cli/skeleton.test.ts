@@ -1,6 +1,7 @@
 import type { Command } from '@commander-js/extra-typings';
 import { describe, expect, it } from 'vitest';
 import pkg from '../../package.json' with { type: 'json' };
+import type { Context } from '../../src/core/context.js';
 import { CliError } from '../../src/core/errors.js';
 import { type GlobalFlags, readGlobalFlags } from '../../src/core/flags.js';
 import { runCli } from '../helpers/run.js';
@@ -98,9 +99,9 @@ describe('commands registered after the root program', () => {
 
   it('read global flags wherever they appear on the command line', async () => {
     let seen: GlobalFlags | undefined;
-    const configure = (p: Command) => {
+    const configure = (p: Command, ctx: Context) => {
       p.command('probe').action((_opts, cmd) => {
-        seen = readGlobalFlags(cmd);
+        seen = readGlobalFlags(cmd, ctx.env);
       });
     };
     const r = await runCli(
@@ -123,9 +124,9 @@ describe('commands registered after the root program', () => {
 
   it('global flags default to interactive, colored and non-destructive', async () => {
     let seen: GlobalFlags | undefined;
-    const configure = (p: Command) => {
+    const configure = (p: Command, ctx: Context) => {
       p.command('probe').action((_opts, cmd) => {
-        seen = readGlobalFlags(cmd);
+        seen = readGlobalFlags(cmd, ctx.env);
       });
     };
     await runCli(['probe'], { configure });
@@ -137,6 +138,25 @@ describe('commands registered after the root program', () => {
       input: true,
       color: true,
       debug: false,
+    });
+  });
+
+  it('color is also disabled by NO_COLOR and TERM=dumb in the injected env, not by an empty NO_COLOR', async () => {
+    const seenColor: Record<string, boolean | undefined> = {};
+    const configure = (p: Command, ctx: Context) => {
+      p.command('probe').action((_opts, cmd) => {
+        seenColor[JSON.stringify(ctx.env)] = readGlobalFlags(cmd, ctx.env).color;
+      });
+    };
+    for (const env of [{}, { NO_COLOR: '' }, { NO_COLOR: '1' }, { TERM: 'dumb' }, { TERM: 'xterm-256color' }]) {
+      await runCli(['probe'], { env, configure });
+    }
+    expect(seenColor).toEqual({
+      '{}': true,
+      '{"NO_COLOR":""}': true,
+      '{"NO_COLOR":"1"}': false,
+      '{"TERM":"dumb"}': false,
+      '{"TERM":"xterm-256color"}': true,
     });
   });
 
@@ -157,5 +177,84 @@ describe('commands registered after the root program', () => {
     expect(human.stdout).toBe('');
     expect(human.stderr).toContain('Project "my-site" was not found.');
     expect(human.stderr).toContain('Run "cf-pages projects list".');
+  });
+});
+
+describe('error redaction', () => {
+  const SECRET = 'cfat_secretsecret';
+  const probe = (p: Command) => {
+    p.command('probe').action(() => {});
+  };
+
+  it('a token echoed by commander in an unknown option never reaches stdout or stderr', async () => {
+    for (const args of [
+      [`--token=${SECRET}`],
+      [`--token=${SECRET}`, 'probe'],
+      ['--json', `--token=${SECRET}`, 'probe'],
+    ]) {
+      const r = await runCli(args);
+      expect(r.exitCode).toBe(2);
+      expect(r.stdout).not.toContain(SECRET);
+      expect(r.stderr).not.toContain(SECRET);
+    }
+  });
+
+  it('a token typed as a command or argument is redacted in human and --json output', async () => {
+    for (const args of [[SECRET], ['--json', SECRET]]) {
+      const r = await runCli(args);
+      expect(r.exitCode).toBe(2);
+      expect(r.stdout).not.toContain(SECRET);
+      expect(r.stderr).not.toContain(SECRET);
+      expect(r.stdout + r.stderr).toContain('[redacted]');
+    }
+    const unknownCommand = await runCli(['--json', SECRET], { configure: probe });
+    expect(unknownCommand.exitCode).toBe(2);
+    expect(unknownCommand.stdout).not.toContain(SECRET);
+    expect(unknownCommand.json<{ error: { message: string } }>().error.message).toContain(
+      "unknown command '[redacted]'",
+    );
+  });
+
+  it('message, hint and string details of any CliError are redacted, including nested ones', async () => {
+    const configure = (p: Command) => {
+      p.command('leak').action(() => {
+        throw new CliError('api_error', `Bad credentials ${SECRET}`, {
+          hint: `Retry without ${SECRET}`,
+          details: { status: 403, header: `Bearer ${SECRET}`, nested: { values: [SECRET, 7] } },
+        });
+      });
+    };
+    const json = await runCli(['--json', 'leak'], { configure });
+    expect(json.exitCode).toBe(6);
+    expect(json.stdout).not.toContain(SECRET);
+    expect(json.json()).toEqual({
+      ok: false,
+      error: {
+        code: 'api_error',
+        message: 'Bad credentials [redacted]',
+        hint: 'Retry without [redacted]',
+        details: { status: 403, header: 'Bearer [redacted]', nested: { values: ['[redacted]', 7] } },
+      },
+    });
+    const human = await runCli(['leak'], { configure });
+    expect(human.exitCode).toBe(6);
+    expect(human.stderr).not.toContain(SECRET);
+    expect(human.stderr).toContain('Bad credentials [redacted]');
+    expect(human.stderr).toContain('Retry without [redacted]');
+  });
+
+  it('secrets registered at runtime are redacted from CliErrors too', async () => {
+    const r = await runCli(['leak'], {
+      configure: (p, ctx) => {
+        ctx.redactor.add('hunter2-plain-value');
+        p.command('leak').action(() => {
+          throw new CliError('permission_denied', 'Rejected hunter2-plain-value', {
+            hint: 'hunter2-plain-value is wrong',
+          });
+        });
+      },
+    });
+    expect(r.exitCode).toBe(3);
+    expect(r.stderr).not.toContain('hunter2-plain-value');
   });
 });
