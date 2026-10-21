@@ -1,0 +1,40 @@
+{
+  "name": "cf-pages",
+  "version": "0.1.0",
+  "description": "Safe, agent-friendly CLI for Cloudflare Pages: deployments, build logs, rollbacks and env vars. Unofficial. Not affiliated with or endorsed by Cloudflare.",
+  "type": "module",
+  "bin": {
+    "cf-pages": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "test": "vitest run",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@biomejs/biome": "^2.6.2",
+    "@commander-js/extra-typings": "^15.0.0",
+    "@inquirer/prompts": "^8.7.4",
+    "@types/node": "^22.20.5",
+    "commander": "^15.0.0",
+    "msw": "^3.0.3",
+    "tsdown": "^0.23.1",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  },
+  "optionalDependencies": {
+    "@napi-rs/keyring": "^2.1.2"
+  }
+}
