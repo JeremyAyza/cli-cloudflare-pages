@@ -19,6 +19,10 @@ export class PagesApi {
     this.#accountId = accountId;
   }
 
+  get accountId(): string {
+    return this.#accountId;
+  }
+
   #projects(): string {
     return `/accounts/${enc(this.#accountId)}/pages/projects`;
   }
