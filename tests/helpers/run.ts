@@ -111,6 +111,7 @@ export interface RunOptions extends FakeIOOptions {
    * `'unavailable'` makes `ctx.openKeyring()` fail like a machine without a secure store.
    */
   keyring?: Map<string, string> | 'unavailable';
+  opened?: string[];
 }
 
 export interface RunResult {
@@ -118,6 +119,7 @@ export interface RunResult {
   stdout: string;
   stderr: string;
   prompts: string[];
+  opened: string[];
   /** Parses the whole of stdout as one JSON document; throws if stdout holds anything else. */
   // biome-ignore lint/suspicious/noExplicitAny: test helper, callers narrow the shape themselves
   json<T = any>(): T;
@@ -147,12 +149,15 @@ export function fakeKeyringStore(entries: Map<string, string>): SecretStore {
 }
 
 /** The `Context` and fake IO that `runCli` uses, for tests that exercise core code without going through commander. */
-export async function createTestContext(opts: RunOptions = {}): Promise<{ ctx: Context; io: FakeIO }> {
+export async function createTestContext(
+  opts: RunOptions = {},
+): Promise<{ ctx: Context; io: FakeIO; opened: string[] }> {
   const io = fakeIO(opts);
   const configDir = opts.configDir ?? (await makeTempDir());
   // Virtual clock: `sleep` resolves immediately but advances `now`, so polling loops and timeouts stay deterministic.
   let clock = (opts.now ?? new Date()).getTime();
   const keyring = opts.keyring ?? new Map<string, string>();
+  const opened = opts.opened ?? [];
   const ctx: Context = {
     io,
     env: opts.env ?? {},
@@ -172,8 +177,11 @@ export async function createTestContext(opts: RunOptions = {}): Promise<{ ctx: C
       }
       return fakeKeyringStore(keyring);
     },
+    openUrl: async (url) => {
+      opened.push(url);
+    },
   };
-  return { ctx, io };
+  return { ctx, io, opened };
 }
 
 /**
@@ -199,7 +207,7 @@ export async function loggedIn(opts: RunOptions = {}): Promise<RunOptions> {
 
 /** Runs the CLI end to end with a fake IO and returns its exit code and captured output. Never exits the process. */
 export async function runCli(args: string[], opts: RunOptions = {}): Promise<RunResult> {
-  const { ctx, io } = await createTestContext(opts);
+  const { ctx, io, opened } = await createTestContext(opts);
   const exitCode = await main(args, ctx, (program) => opts.configure?.(program, ctx));
   await settleRecordedRequests();
   return {
@@ -207,6 +215,7 @@ export async function runCli(args: string[], opts: RunOptions = {}): Promise<Run
     stdout: io.out,
     stderr: io.err,
     prompts: [...io.prompts],
+    opened,
     json: <T>() => JSON.parse(io.out) as T,
   };
 }
