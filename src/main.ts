@@ -1,5 +1,7 @@
 import { Command, CommanderError } from '@commander-js/extra-typings';
 import { registerAuth } from './commands/auth.js';
+import { registerDeployments } from './commands/deployments.js';
+import { registerProjects } from './commands/projects.js';
 import { registerSettings } from './commands/settings.js';
 import type { Context } from './core/context.js';
 import { CliError } from './core/errors.js';
@@ -47,6 +49,8 @@ export function createProgram(ctx: Context): Command {
 
   registerAuth(program, ctx);
   registerSettings(program, ctx);
+  registerProjects(program, ctx);
+  registerDeployments(program, ctx);
   return program;
 }
 
