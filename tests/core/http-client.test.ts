@@ -1,4 +1,4 @@
-import { delay, HttpResponse, http } from 'msw';
+import { HttpResponse, http } from 'msw';
 import { describe, expect, it, vi } from 'vitest';
 import type { GlobalFlags } from '../../src/core/flags.js';
 import {
@@ -24,6 +24,18 @@ function makeClient(opts: Partial<ApiClientOptions> = {}) {
   const sleep = vi.fn(async (_ms: number) => {});
   const client = new ApiClient({ token: TEST_TOKEN, userAgent: 'cf-pages/1.2.3', sleep, ...opts });
   return { client, sleep };
+}
+
+/** Resolves when `request.signal` aborts, or after fallbackMs if it does not. Prevents orphaned handlers. */
+function hangUntilAborted(request: Request, fallbackMs = 150): Promise<void> {
+  return new Promise((resolve) => {
+    if (request.signal.aborted) {
+      resolve();
+      return;
+    }
+    request.signal.addEventListener('abort', () => resolve(), { once: true });
+    setTimeout(resolve, fallbackMs);
+  });
 }
 
 /** Answers successive requests to `method path` with the given responders; the last one repeats. */
@@ -101,6 +113,13 @@ describe('ApiClient path safety', () => {
     ['encoded slash before ..', `${DEPLOYMENTS}/x%2f..`],
     ['encoded backslash before ..', `${DEPLOYMENTS}/x%5C%2e%2e`],
     ['followed by a query-like tail', `${DEPLOYMENTS}/..?x=1`],
+    ['tab inside segment', `${DEPLOYMENTS}/.\t.`],
+    ['newline inside segment', `${DEPLOYMENTS}/.\n.`],
+    ['carriage return inside segment', `${DEPLOYMENTS}/.\r.`],
+    ['encoded tab %09', `${DEPLOYMENTS}/.%09.`],
+    ['encoded newline %0a', `${DEPLOYMENTS}/foo%0abar`],
+    ['raw null byte', `${DEPLOYMENTS}/foo\0bar`],
+    ['encoded null byte %00', `${DEPLOYMENTS}/foo%00bar`],
   ])('rejects a dot path segment (%s) with a usage error before any request is sent', async (_label, path) => {
     const seen = recordRequests();
     const { client, sleep } = makeClient();
@@ -310,8 +329,8 @@ describe('ApiClient retries (Review Focus 1)', () => {
   it('a mutation that times out is NOT retried and carries the applied hint', async () => {
     const seen = recordRequests();
     server.use(
-      http.post(cfUrl(PROJECTS), async () => {
-        await delay(300);
+      http.post(cfUrl(PROJECTS), async ({ request }) => {
+        await hangUntilAborted(request);
         return ok({});
       }),
     );
@@ -337,8 +356,8 @@ describe('ApiClient retries (Review Focus 1)', () => {
   it('GET that times out is retried with backoff, then fails without the mutation hint', async () => {
     const seen = recordRequests();
     server.use(
-      http.get(cfUrl(PROJECTS), async () => {
-        await delay(300);
+      http.get(cfUrl(PROJECTS), async ({ request }) => {
+        await hangUntilAborted(request);
         return ok([]);
       }),
     );

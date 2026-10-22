@@ -121,14 +121,43 @@ function retryAfterSeconds(header: string | null): number {
   return Number.isFinite(seconds) && seconds >= 0 ? Math.ceil(seconds) : DEFAULT_RETRY_AFTER_SECONDS;
 }
 
+function hasAsciiControl(str: string): boolean {
+  for (let i = 0; i < str.length; i++) {
+    const code = str.charCodeAt(i);
+    if ((code >= 0 && code <= 0x1f) || code === 0x7f) return true;
+  }
+  return false;
+}
+
+function stripControlChars(str: string): string {
+  let out = '';
+  for (let i = 0; i < str.length; i++) {
+    const code = str.charCodeAt(i);
+    if ((code >= 0 && code <= 0x1f) || code === 0x7f) continue;
+    out += str[i];
+  }
+  return out.replace(/%0[0-9a-f]|%1[0-9a-f]|%7f/gi, '');
+}
+
+/**
+ * Control characters (ASCII 0x00-0x1F and 0x7F), in raw form or percent-encoded (%00-%1F, %7F).
+ * URL parsers like WHATWG URL strip tabs and newlines (\t, \r, \n) before resolving segments, which could turn
+ * `.\t.` into `..` (path traversal). No valid Cloudflare identifier contains control characters.
+ */
+function hasControlChar(path: string): boolean {
+  const pathOnly = path.split(/[?#]/, 1)[0] ?? '';
+  return hasAsciiControl(pathOnly) || /%0[0-9a-f]|%1[0-9a-f]|%7f/i.test(pathOnly);
+}
+
 /**
  * True when any segment of `path` is `.` or `..`, written raw or with percent-encoded dots (`%2e`, `%2E`, `.%2e`…).
  * `fetch` and many servers resolve those segments, so `/deployments/..` would address a different endpoint than the one
  * the caller meant. Encoded separators (`%2f`, `%5c`) and raw backslashes count as separators, because a server that
- * decodes them would see a dot segment too. The query string and fragment are not part of the path.
+ * decodes them would see a dot segment too. Strips control characters first to prevent parser stripping bypasses.
+ * The query string and fragment are not part of the path.
  */
 function hasDotSegment(path: string): boolean {
-  const pathOnly = path.split(/[?#]/, 1)[0] ?? '';
+  const pathOnly = stripControlChars(path.split(/[?#]/, 1)[0] ?? '');
   return pathOnly
     .replace(/%2e/gi, '.')
     .split(/\/|\\|%2f|%5c/i)
@@ -181,6 +210,15 @@ export class ApiClient {
     if (o.json !== undefined && o.form !== undefined)
       throw new Error('A request cannot have both a json and a form body.');
     const path = o.path.startsWith('/') ? o.path : `/${o.path}`;
+    if (hasControlChar(path)) {
+      throw new CliError(
+        'usage',
+        `Refusing to call the Cloudflare API with control characters in path (${o.method} ${path}).`,
+        {
+          hint: 'Project names, deployment IDs and variable names cannot contain control characters. Check the value you passed.',
+        },
+      );
+    }
     if (hasDotSegment(path)) {
       throw new CliError(
         'usage',

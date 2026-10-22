@@ -70,7 +70,17 @@ function withoutArgvValues(code: string, message: string): string {
   switch (code) {
     case 'commander.unknownOption': {
       const m = /^unknown option '([\s\S]*?)'((?:\n\(Did you mean [^\n]*\?\))?)$/.exec(message);
-      return m ? `unknown option '${(m[1] ?? '').split('=')[0]}'${m[2] ?? ''}` : 'unknown option';
+      if (!m) return 'unknown option';
+      const raw = m[1] ?? '';
+      let opt: string;
+      if (raw.startsWith('--')) {
+        opt = raw.split('=')[0] ?? raw;
+      } else if (raw.startsWith('-')) {
+        opt = raw.slice(0, 2);
+      } else {
+        opt = raw.split('=')[0] ?? raw;
+      }
+      return `unknown option '${opt}'${m[2] ?? ''}`;
     }
     case 'commander.excessArguments':
       return message.replace(
@@ -79,8 +89,11 @@ function withoutArgvValues(code: string, message: string): string {
       );
     case 'commander.unknownCommand': {
       const m = /^unknown command '([\s\S]*?)'((?:\n\(Did you mean [^\n]*\?\))?)$/.exec(message);
-      // A typo of a command name is useful to see; anything that is not a short plain word could be a secret.
-      const name = m?.[1] !== undefined && /^[A-Za-z][A-Za-z0-9-]{0,24}$/.test(m[1]) ? m[1] : '[redacted]';
+      // Words that are plain short alphabetic names (like command names or typos) are safe to show;
+      // anything with numbers, symbols, uppercase, or longer than 15 chars could be a secret.
+      const candidate = m?.[1] ?? '';
+      const isPlainWord = /^[a-z-]{1,15}$/.test(candidate);
+      const name = isPlainWord ? candidate : '[redacted]';
       return `unknown command '${name}'${m?.[2] ?? ''}`;
     }
     case 'commander.invalidArgument':

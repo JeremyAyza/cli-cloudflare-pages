@@ -117,6 +117,7 @@ describe('fileSecretStore', () => {
       expect(code).toBe('unexpected');
       expect(hint).toContain(path);
       expect(`${message} ${hint}`).not.toContain(TOKEN);
+      expect((err as CliError).cause).toBeUndefined();
     }
     // Refusing to touch it means a failed set never destroys what is there.
     expect(await readFile(path, 'utf8')).toBe(`{ "default": "${TOKEN}`);

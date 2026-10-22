@@ -14,11 +14,10 @@ export function fileSecretStore(dir: string): SecretStore {
   const path = join(dir, CREDENTIALS_FILE);
 
   // The message never quotes the file: it holds secrets.
-  const corrupt = (problem: string, cause?: unknown) =>
+  const corrupt = (problem: string) =>
     new CliError('unexpected', `The credentials file is invalid: ${problem}.`, {
       hint: `Delete ${path} and run \`cf-pages login\` again, or use CF_PAGES_API_TOKEN and CF_PAGES_ACCOUNT_ID.`,
       details: { path },
-      ...(cause === undefined ? {} : { cause }),
     });
 
   async function load(): Promise<Map<string, string>> {
@@ -32,8 +31,8 @@ export function fileSecretStore(dir: string): SecretStore {
     let parsed: unknown;
     try {
       parsed = JSON.parse(text);
-    } catch (cause) {
-      throw corrupt('it is not valid JSON', cause);
+    } catch {
+      throw corrupt('it is not valid JSON');
     }
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
       throw corrupt('expected a JSON object');

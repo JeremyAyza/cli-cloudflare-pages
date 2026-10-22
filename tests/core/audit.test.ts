@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -50,6 +50,15 @@ describe('appendAudit', () => {
     expect(await appendAudit(nested, first)).toBe(true);
     expect((await stat(join(nested, AUDIT_FILE))).mode & 0o777).toBe(0o600);
     expect((await stat(nested)).mode & 0o777).toBe(0o700);
+  });
+
+  posixOnly('tightens permissions of pre-existing directory and audit.log', async () => {
+    const nested = join(dir, 'cf-pages');
+    await mkdir(nested, { recursive: true, mode: 0o755 });
+    await writeFile(join(nested, AUDIT_FILE), '', { mode: 0o644 });
+    expect(await appendAudit(nested, first)).toBe(true);
+    expect((await stat(nested)).mode & 0o777).toBe(0o700);
+    expect((await stat(join(nested, AUDIT_FILE))).mode & 0o777).toBe(0o600);
   });
 
   it('uses audit.log', () => {

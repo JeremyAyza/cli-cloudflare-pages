@@ -119,6 +119,13 @@ describe('writeConfig', () => {
     expect((await stat(join(dir, CONFIG_FILE))).mode & 0o777).toBe(0o600);
   });
 
+  posixOnly('tightens permissions of pre-existing directory to 0700', async () => {
+    const nested = join(dir, 'cf-pages');
+    await mkdir(nested, { recursive: true, mode: 0o755 });
+    await writeConfig(nested, withProfile);
+    expect((await stat(nested)).mode & 0o777).toBe(0o700);
+  });
+
   it('an unwritable directory rejects and leaves the previous config intact', async () => {
     await writeConfig(dir, withProfile);
     const blocker = join(dir, CONFIG_FILE, 'inside');

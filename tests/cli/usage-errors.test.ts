@@ -51,6 +51,12 @@ describe('usage errors never echo values from the command line', () => {
       expect(message).toContain("unknown option '-z'");
     });
 
+    it(`unknown short option with glued value without = (${mode})`, async () => {
+      const message = await usage(['probe', `-z${SECRET}`], json);
+      expect(message).toContain("unknown option '-z'");
+      expect(message).not.toContain(SECRET);
+    });
+
     it(`stray positional arguments are counted, not quoted (${mode})`, async () => {
       const message = await usage(['probe', 'one', SECRET], json);
       expect(message).toContain('too many arguments');
@@ -72,6 +78,12 @@ describe('usage errors never echo values from the command line', () => {
     it(`an unknown command that is not a plain short word is not quoted (${mode})`, async () => {
       const message = await usage([SECRET], json);
       expect(message).toContain("unknown command '[redacted]'");
+    });
+
+    it(`an unknown command with a short alphanumeric secret is redacted (${mode})`, async () => {
+      const message = await usage(['token12345678'], json);
+      expect(message).toContain("unknown command '[redacted]'");
+      expect(message).not.toContain('token12345678');
     });
   }
 
