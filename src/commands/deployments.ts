@@ -117,7 +117,10 @@ export function registerDeployments(program: Command, ctx: Context): void {
 
       if (opts.output) {
         await writeFile(opts.output, `${lines.join('\n')}\n`, 'utf8');
-        session.out.note(`Logs saved to ${opts.output} (${lines.length} lines).`);
+        session.out.data(
+          { deploymentId: d.id, total: logs.total, savedTo: opts.output, lineCount: lines.length },
+          (data) => `Logs saved to ${data.savedTo} (${data.lineCount} lines).`,
+        );
         return;
       }
 

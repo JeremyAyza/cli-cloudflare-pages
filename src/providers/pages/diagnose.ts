@@ -82,7 +82,11 @@ export function diagnoseProject({ project, deployments, expect }: DiagnoseProjec
       });
     }
 
-    if ((src.path_includes && src.path_includes.length > 0) || (src.path_excludes && src.path_excludes.length > 0)) {
+    // Include "*" with no excludes is the dashboard default and matches every commit.
+    const includes = src.path_includes ?? [];
+    const excludes = src.path_excludes ?? [];
+    const narrowsIncludes = includes.length > 0 && !(includes.length === 1 && includes[0] === '*');
+    if (narrowsIncludes || excludes.length > 0) {
       findings.push({
         level: 'info',
         code: 'watch_paths',

@@ -27,6 +27,13 @@ Or install globally:
 npm install -g cf-pages
 ```
 
+Or from a clone of this repository:
+```bash
+npm ci
+npm run build
+npm link
+```
+
 ---
 
 ## Authentication & Storage
@@ -122,6 +129,22 @@ All commands support `--json` for single-document machine-readable JSON output o
 - `5`: Confirmation required or cancelled
 - `6`: Cloudflare API error or verification mismatch
 - `7`: Deployment finished in failure (`--wait`)
+
+---
+
+## Agent Skill
+
+`skills/cf-pages/` is an [Agent Skill](https://agentskills.io) that teaches coding agents (Claude Code,
+Codex, Gemini CLI, Cursor and others) to use this CLI safely: always `--json`, never touch the token,
+dry run and an explicit approval in the chat before every change, and diagnosis recipes for failed or
+missing deployments. It ships in the npm package and in this repository.
+
+Install it by copying the folder to where your agent loads skills from:
+- Claude Code: `~/.claude/skills/cf-pages/` (all projects) or `.claude/skills/cf-pages/` (one project).
+- Agents that read `.agents/skills/` (Codex, Gemini CLI, Cursor, Copilot): `.agents/skills/cf-pages/`.
+
+The skill expects `cf-pages` on `PATH` and a login made by you with `cf-pages login`. The agent never
+logs in for you.
 
 ---
 

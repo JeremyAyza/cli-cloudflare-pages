@@ -56,3 +56,15 @@ When invoked with `--json`, `cf-pages` writes exactly one JSON document to stdou
 - `masked`: string | null
 - `length`: number | null
 - `value`: string (present ONLY if explicitly revealed with `--reveal`)
+
+## Results Without a View Model
+
+- `env get --reveal --json`: an `EnvVarView` that includes `value`.
+- `env set` / `env unset`: `{ project, env, changes: PlanItemView[], applied, dryRun?, redeploy?: DeploymentView }`. When nothing would change, `applied` is `false` and every change has `action: 'unchanged'`.
+- `deployments logs --output <file>`: `{ deploymentId, total, savedTo, lineCount }` instead of `lines`.
+
+### `PlanItemView`
+- `key`: string
+- `action`: `'create' | 'update' | 'delete' | 'unchanged'`
+- `type`: `'plain_text' | 'secret_text'`
+- `fromType`, `becomesReadable`, `overwritesSecret`: present only when `action` is `'update'`

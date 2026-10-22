@@ -119,7 +119,8 @@ export function registerEnv(program: Command, ctx: Context): void {
         });
 
         session.out.warn(`Revealing plain text value of '${key}' in ${opts.env}.`);
-        ctx.io.stdout(`${v.value ?? ''}\n`);
+        // Human mode prints the bare value so it can be piped; --json keeps the single-document contract.
+        session.out.data(envVarView(key, v, true), (val) => val.value ?? '');
         return;
       }
 
@@ -202,7 +203,16 @@ export function registerEnv(program: Command, ctx: Context): void {
       const plan = planSet(before, entries, { env, type: explicitType });
 
       if (!hasChanges(plan)) {
-        session.out.note('No changes.');
+        session.out.data(
+          {
+            project,
+            env,
+            changes: plan.items.map(planItemView),
+            applied: false,
+            ...(flags.dryRun ? { dryRun: true } : {}),
+          },
+          () => 'No changes.',
+        );
         return;
       }
 

@@ -2,7 +2,7 @@ import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 
 const MAX_UNPACKED_SIZE = 3_000_000;
-const ALLOWED_FILE_PREFIXES = ['dist/', 'README.md', 'LICENSE', 'CHANGELOG.md', 'package.json'];
+const ALLOWED_FILE_PREFIXES = ['dist/', 'skills/', 'README.md', 'LICENSE', 'CHANGELOG.md', 'package.json'];
 
 const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
 

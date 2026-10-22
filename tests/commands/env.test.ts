@@ -93,6 +93,27 @@ describe('env list & get', () => {
     expect(res.stdout).toBe('visible-value-123\n');
     expect(res.stderr).toContain("Revealing plain text value of 'PLAIN_KEY'");
   });
+
+  it('get --reveal --json → a single JSON document with the value, warning on stderr', async () => {
+    const p = makeProject({
+      name: 'my-site',
+      deployment_configs: {
+        production: {
+          env_vars: { PLAIN_KEY: { type: 'plain_text', value: 'visible-value-123' } },
+        },
+      },
+    });
+
+    server.use(http.get(cfUrl(`/accounts/${ACCT}/pages/projects/my-site`), () => ok(p)));
+
+    const opts = await loggedIn();
+    const res = await runCli(['env', 'get', 'my-site', 'PLAIN_KEY', '--env', 'production', '--reveal', '--json'], opts);
+    expect(res.exitCode).toBe(0);
+    const body = res.json<{ ok: boolean; data: { key: string; value: string; length: number } }>();
+    expect(body.ok).toBe(true);
+    expect(body.data).toMatchObject({ key: 'PLAIN_KEY', value: 'visible-value-123', length: 17 });
+    expect(res.stderr).toContain("Revealing plain text value of 'PLAIN_KEY'");
+  });
 });
 
 describe('env set & unset', () => {
@@ -151,6 +172,37 @@ describe('env set & unset', () => {
     });
     // Secret was added to redactor, stdout never contains it
     expect(res.stdout).not.toContain('secret-hunter2');
+  });
+
+  it('set with the value already in place → --json reports no changes and sends no PATCH', async () => {
+    let patchCalled = false;
+    const p = makeProject({
+      name: 'my-site',
+      deployment_configs: {
+        preview: { env_vars: { SAME_KEY: { type: 'plain_text', value: 'same-value' } } },
+      },
+    });
+
+    server.use(
+      http.get(cfUrl(`/accounts/${ACCT}/pages/projects/my-site`), () => ok(p)),
+      http.patch(cfUrl(`/accounts/${ACCT}/pages/projects/my-site`), () => {
+        patchCalled = true;
+        return ok(p);
+      }),
+    );
+
+    const opts = await loggedIn({ stdin: 'same-value\n' });
+    const res = await runCli(['env', 'set', 'my-site', 'SAME_KEY', '--env', 'preview', '--yes', '--json'], opts);
+
+    expect(res.exitCode).toBe(0);
+    expect(patchCalled).toBe(false);
+    const body = res.json<{
+      ok: boolean;
+      data: { applied: boolean; changes: Array<{ key: string; action: string }> };
+    }>();
+    expect(body.ok).toBe(true);
+    expect(body.data.applied).toBe(false);
+    expect(body.data.changes).toEqual([{ key: 'SAME_KEY', action: 'unchanged', type: 'plain_text' }]);
   });
 
   it('set --dry-run prints masked diff without applying PATCH', async () => {

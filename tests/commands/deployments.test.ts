@@ -1,3 +1,6 @@
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { http } from 'msw';
 import { describe, expect, it } from 'vitest';
 import { makeDeployment, makeProject } from '../fixtures/pages.js';
@@ -72,6 +75,41 @@ describe('deployments logs', () => {
     expect(body.data.lines).toHaveLength(2);
     expect(body.data.lines[0]).toContain('line 2');
     expect(body.data.lines[1]).toContain('line 3');
+  });
+
+  it('logs --output --json writes the file and still prints a single JSON document', async () => {
+    const d = makeDeployment({ id: 'dep-1' });
+    const dir = await mkdtemp(join(tmpdir(), 'cf-pages-logs-test-'));
+    const file = join(dir, 'build.log');
+
+    server.use(
+      http.get(cfUrl(`/accounts/${ACCT}/pages/projects/my-site/deployments`), () =>
+        ok([d], { page: 1, per_page: 25, total_pages: 1 }),
+      ),
+      http.get(cfUrl(`/accounts/${ACCT}/pages/projects/my-site/deployments/dep-1/history/logs`), () =>
+        ok({
+          total: 2,
+          includes_container_logs: true,
+          data: [
+            { ts: '2026-10-21T10:00:00Z', line: 'line 1' },
+            { ts: '2026-10-21T10:00:01Z', line: 'line 2' },
+          ],
+        }),
+      ),
+    );
+
+    try {
+      const opts = await loggedIn();
+      const res = await runCli(['deployments', 'logs', 'my-site', '--output', file, '--json'], opts);
+
+      expect(res.exitCode).toBe(0);
+      const body = res.json<{ ok: boolean; data: unknown }>();
+      expect(body.ok).toBe(true);
+      expect(body.data).toEqual({ deploymentId: 'dep-1', total: 2, savedTo: file, lineCount: 2 });
+      expect(await readFile(file, 'utf8')).toBe('2026-10-21T10:00:00Z line 1\n2026-10-21T10:00:01Z line 2\n');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
 
