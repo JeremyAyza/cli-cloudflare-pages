@@ -18,7 +18,11 @@ describe('dashboard urls', () => {
     expect(deploymentDashboardUrl(ACCT, 'my-site', 'd1')).toBe(
       `https://dash.cloudflare.com/${ACCT}/pages/view/my-site/d1`,
     );
-    expect(sectionDashboardUrl(ACCT, 'my-site', 'domains')).toBe(projectDashboardUrl(ACCT, 'my-site')); // unverified → project
+    expect(sectionDashboardUrl(ACCT, 'my-site', 'deployments')).toBe(projectDashboardUrl(ACCT, 'my-site')); // unverified / base → project
+    expect(sectionDashboardUrl(ACCT, 'my-site', 'domains')).toBe(`${projectDashboardUrl(ACCT, 'my-site')}/domains`);
+    expect(sectionDashboardUrl(ACCT, 'my-site', 'variables')).toBe(
+      `${projectDashboardUrl(ACCT, 'my-site')}/settings/production#variables`,
+    );
   });
 
   it('exposes the base URLs', () => {
@@ -48,8 +52,10 @@ describe('sectionDashboardUrl', () => {
   });
 
   it('appends a known section path to the project URL', () => {
-    SECTION_PATHS.settings = 'settings';
-    expect(sectionDashboardUrl(ACCT, 'my-site', 'settings')).toBe(`${projectDashboardUrl(ACCT, 'my-site')}/settings`);
-    expect(sectionDashboardUrl(ACCT, 'my-site', 'domains')).toBe(projectDashboardUrl(ACCT, 'my-site'));
+    SECTION_PATHS.settings = 'custom-settings';
+    expect(sectionDashboardUrl(ACCT, 'my-site', 'settings')).toBe(
+      `${projectDashboardUrl(ACCT, 'my-site')}/custom-settings`,
+    );
+    expect(sectionDashboardUrl(ACCT, 'my-site', 'deployments')).toBe(projectDashboardUrl(ACCT, 'my-site'));
   });
 });

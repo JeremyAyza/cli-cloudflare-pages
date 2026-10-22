@@ -7,14 +7,14 @@ export type DashboardSection = 'deployments' | 'settings' | 'domains' | 'variabl
 
 /**
  * Path of each section below the project URL, without a leading slash. `null` means the path is not verified against
- * a real account yet, so the project URL is used instead. Task 17 fills in the ones it confirms.
+ * a real account yet, so the project URL is used instead. Task 17 confirmed routes against live Cloudflare Pages.
  */
 export const SECTION_PATHS: Record<DashboardSection, string | null> = {
   deployments: null,
-  settings: null,
-  domains: null,
-  variables: null,
-  builds: null,
+  settings: 'settings/production',
+  domains: 'domains',
+  variables: 'settings/production#variables',
+  builds: 'settings/production#build',
 };
 
 const enc = encodeURIComponent;
