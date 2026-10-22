@@ -64,18 +64,18 @@ Cada decisión lleva su motivo y lo que cuesta si es incorrecta.
 
 Detalle completo en `docs/handoff-progress.md`. La revisión final (Opus) debe decidir cuáles se corrigen antes del merge.
 
-### Deben resolverse ANTES del merge
+### Deben resolverse ANTES del merge (RESUELTOS en d243ba3)
 
-**Seguridad**
-- **T5.** `file-store` adjunta como `cause` el `SyntaxError` de `JSON.parse`. El mensaje de V8 puede citar contenido de `credentials.json`, es decir, un fragmento del token. Hoy no se muestra, pero hay que eliminarlo.
-- **T5 y T4.** El archivo temporal de `private-file` se abre con `'w'` y un nombre predecible con el pid; debe usarse `'wx'`. Además, los permisos de directorios y archivos que ya existían, incluido `audit.log`, no se endurecen.
-- **T8.**
-  - Una opción corta con el valor pegado (`-zSECRETO`) se repite en el error "unknown option".
-  - "unknown command" mantiene las palabras simples de 25 caracteres o menos, así que un secreto alfanumérico corto podría repetirse.
-- **T6.** Un tabulador o salto de línea dentro de un segmento (`.\t.`) se convierte en `..` al parsear la URL. Hay que rechazar los caracteres de control en los segmentos.
+**Seguridad (Resueltos)**
+- [x] **T5.** `file-store` adjunta como `cause` el `SyntaxError` de `JSON.parse`. Corregido: se eliminó `cause` para que V8 nunca cite fragmentos de credenciales en errores de parseo JSON.
+- [x] **T5 y T4.** `private-file` se abre con `'wx'` en lugar de `'w'`. Además, se endurecen permisos de directorios (0700) y archivos (0600) preexistentes, incluido `audit.log`.
+- [x] **T8.**
+  - [x] Opción corta con valor pegado (`-zSECRETO`): se corta al nombre corto de la opción (`-z`).
+  - [x] "unknown command": solo repite palabras alfabéticas simples en minúsculas (sin dígitos ni símbolos ni mayúsculas), redactando cualquier otro valor como `[redacted]`.
+- [x] **T6.** Caracteres de control en segmentos: `ApiClient` rechaza caracteres de control ASCII (crudos y codificados en porcentaje `%00-%1F, %7F`) y los limpia antes de evaluar segmentos `.` / `..`.
 
-**Test flaky**
-- **T6.** `tests/core/http-client.test.ts` → "POST 429 retry-after 2 → retried once and succeeds" falló una vez con la suite completa bajo carga. Hay que estabilizarlo; probablemente es un problema de tiempos o del reloj virtual.
+**Test flaky (Resuelto)**
+- [x] **T6.** `tests/core/http-client.test.ts` → "POST 429 retry-after 2": estabilizado con `hangUntilAborted` (el mock se cancela inmediatamente cuando el cliente aborta la señal en lugar de dejar un temporizador activo tras finalizar el test) y `settleRecordedRequests()` en `setup.ts`.
 
 ### Resto, no bloqueante
 
